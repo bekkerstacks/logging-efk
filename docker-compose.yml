@@ -1,0 +1,62 @@
+version: "3.7"
+
+services:
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:-6.3.1}
+    networks:
+      - appnet
+    environment:
+      - SERVER_NAME=https://kibana.${DOMAIN}
+      - ELASTICSEARCH_HOSTS=${ELASTICSEARCH_HOST}:${ELASTICSEARCH_PORT}
+      - XPACK_MONITORING_ENABLED=false
+      - ELASTICSEARCH_URL=${ELASTICSEARCH_HOST}:${ELASTICSEARCH_PORT}
+      - ELASTICSEARCH_USERNAME=${ELASTICSEARCH_USERNAME}
+      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD}
+    deploy:
+      mode: replicated
+      replicas: 1
+      labels:
+        - "traefik.backend.loadbalancer.sticky=false"
+        - "traefik.backend.loadbalancer.swarm=true"
+        - "traefik.backend=kibana"
+        - "traefik.docker.network=appnet"
+        - "traefik.entrypoints=https"
+        - "traefik.frontend.passHostHeader=true"
+        - "traefik.frontend.rule=Host:kibana.${DOMAIN}"
+        - "traefik.port=5601"
+        
+  filebeat:
+    image: docker.elastic.co/beats/filebeat:${ELASTIC_VERSION:-6.3.1}
+    hostname: "{{.Node.Hostname}}-filebeat"
+    user: root
+    networks:
+      - appnet
+    configs:
+      - source: fb_config
+        target: /usr/share/filebeat/filebeat.yml
+    volumes:
+      - filebeat:/usr/share/filebeat/data
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /var/lib/docker/containers/:/var/lib/docker/containers/:ro
+      - /var/log/:/var/log/:ro
+    environment:
+      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST}
+      - KIBANA_HOST=${KIBANA_HOST}
+      - ELASTICSEARCH_USERNAME=${ELASTICSEARCH_USERNAME}
+      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD}
+      - ELASTICSEARCH_PORT=${ELASTICSEARCH_PORT:-80}
+      - KIBANA_PORT=${KIBANA_PORT:-443}
+    command: ["--strict.perms=false"]
+    deploy:
+      mode: global
+
+networks:
+  appnet:
+    external: true
+
+volumes:
+  filebeat:
+
+configs:
+  fb_config:
+    file: $PWD/filebeat/config/filebeat.yml
