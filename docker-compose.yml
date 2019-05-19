@@ -1,17 +1,39 @@
 version: "3.7"
 
 services:
-  kibana:
-    image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:-6.3.1}
+  elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-6.5.0}
+    hostname: "{{.Node.Hostname}}-elasticsearch"
+    environment:
+      - discovery.zen.ping.unicast.hosts=elasticsearch
+      - discovery.zen.minimum_master_nodes=1
+      - ELASTIC_PASSWORD=${ELASTICSEARCH_PASSWORD:-changeme}
+      - xpack.security.enabled=false
+      - xpack.monitoring.collection.enabled=false
+      - xpack.license.self_generated.type=trial
+      - cluster.name=es-cluster
+      - node.name={{.Node.Hostname}}-elasticsearch
+      - network.host=0.0.0.0
     networks:
       - appnet
+    volumes:
+      - elasticsearch:/usr/share/elasticsearch/data
+    deploy:
+      mode: 'global'
+      endpoint_mode: dnsrr
+
+  kibana:
+    image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:-6.5.0}
+    networks:
+      - appnet
+      - public
     environment:
       - SERVER_NAME=https://kibana.${DOMAIN}
-      - ELASTICSEARCH_HOSTS=${ELASTICSEARCH_HOST}:${ELASTICSEARCH_PORT}
+      - ELASTICSEARCH_HOSTS=${ELASTICSEARCH_HOST:-elasticsearch}:${ELASTICSEARCH_PORT:-9200}
       - XPACK_MONITORING_ENABLED=false
-      - ELASTICSEARCH_URL=${ELASTICSEARCH_HOST}:${ELASTICSEARCH_PORT}
-      - ELASTICSEARCH_USERNAME=${ELASTICSEARCH_USERNAME}
-      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD}
+      - ELASTICSEARCH_URL=${ELASTICSEARCH_HOST:-elasticsearch}:${ELASTICSEARCH_PORT:-5601}
+      - ELASTICSEARCH_USERNAME=${ELASTICSEARCH_USERNAME:-changeme}
+      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-changeme}
     deploy:
       mode: replicated
       replicas: 1
@@ -26,7 +48,7 @@ services:
         - "traefik.port=5601"
         
   filebeat:
-    image: docker.elastic.co/beats/filebeat:${ELASTIC_VERSION:-6.3.1}
+    image: docker.elastic.co/beats/filebeat:${ELASTIC_VERSION:-6.5.0}
     hostname: "{{.Node.Hostname}}-filebeat"
     user: root
     networks:
@@ -40,12 +62,12 @@ services:
       - /var/lib/docker/containers/:/var/lib/docker/containers/:ro
       - /var/log/:/var/log/:ro
     environment:
-      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST}
-      - KIBANA_HOST=${KIBANA_HOST}
-      - ELASTICSEARCH_USERNAME=${ELASTICSEARCH_USERNAME}
-      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD}
-      - ELASTICSEARCH_PORT=${ELASTICSEARCH_PORT:-80}
-      - KIBANA_PORT=${KIBANA_PORT:-443}
+      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-elasticsearch}
+      - KIBANA_HOST=${KIBANA_HOST:-kibana}
+      - ELASTICSEARCH_USERNAME=${ELASTICSEARCH_USERNAME:-changeme}
+      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-changeme}
+      - ELASTICSEARCH_PORT=${ELASTICSEARCH_PORT:-9200}
+      - KIBANA_PORT=${KIBANA_PORT:-5601}
     command: ["--strict.perms=false"]
     deploy:
       mode: global
@@ -53,9 +75,12 @@ services:
 networks:
   appnet:
     external: true
+  public:
+    external: true
 
 volumes:
-  filebeat:
+  filebeat: {}
+  elasticsearch: {}
 
 configs:
   fb_config:
