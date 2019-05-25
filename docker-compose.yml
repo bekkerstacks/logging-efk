@@ -2,11 +2,12 @@ version: "3.7"
 
 services:
   elasticsearch:
-    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-6.5.0}
+    image: docker.elastic.co/elasticsearch/elasticsearch:${ELASTIC_VERSION:-6.7.0}
     hostname: "{{.Node.Hostname}}-elasticsearch"
     environment:
       - discovery.zen.ping.unicast.hosts=elasticsearch
       - discovery.zen.minimum_master_nodes=1
+      - discovery.type=single-node
       - ELASTIC_PASSWORD=${ELASTICSEARCH_PASSWORD:-changeme}
       - xpack.security.enabled=false
       - xpack.monitoring.collection.enabled=false
@@ -14,8 +15,10 @@ services:
       - cluster.name=es-cluster
       - node.name={{.Node.Hostname}}-elasticsearch
       - network.host=0.0.0.0
+      - bootstrap.memory_lock=true
+      - "ES_JAVA_OPTS=-Xms750m -Xmx750m"
     networks:
-      - appnet
+      - private
     volumes:
       - elasticsearch:/usr/share/elasticsearch/data
     deploy:
@@ -23,36 +26,33 @@ services:
       endpoint_mode: dnsrr
 
   kibana:
-    image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:-6.5.0}
+    image: docker.elastic.co/kibana/kibana:${ELASTIC_VERSION:-6.7.0}
     networks:
-      - appnet
+      - private
       - public
     environment:
-      - SERVER_NAME=https://kibana.${DOMAIN}
-      - ELASTICSEARCH_HOSTS=${ELASTICSEARCH_HOST:-elasticsearch}:${ELASTICSEARCH_PORT:-9200}
-      - XPACK_MONITORING_ENABLED=false
-      - ELASTICSEARCH_URL=${ELASTICSEARCH_HOST:-elasticsearch}:${ELASTICSEARCH_PORT:-5601}
-      - ELASTICSEARCH_USERNAME=${ELASTICSEARCH_USERNAME:-changeme}
+      - SERVER_NAME=kibana.${DOMAIN:-localhost}
+      - ELASTICSEARCH_URL=${ELASTICSEARCH_HOST:-http://elasticsearch}:${ELASTICSEARCH_PORT:-9200}
+      - ELASTICSEARCH_USERNAME=${ELASTICSEARCH_USERNAME:-elastic}
       - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-changeme}
     deploy:
       mode: replicated
       replicas: 1
       labels:
-        - "traefik.backend.loadbalancer.sticky=false"
-        - "traefik.backend.loadbalancer.swarm=true"
-        - "traefik.backend=kibana"
-        - "traefik.docker.network=appnet"
-        - "traefik.entrypoints=https"
-        - "traefik.frontend.passHostHeader=true"
-        - "traefik.frontend.rule=Host:kibana.${DOMAIN}"
-        - "traefik.port=5601"
+        - traefik.frontend.rule=Host:kibana.${DOMAIN:-localhost}
+        - traefik.enable=true
+        - traefik.port=5601
+        - traefik.tags=public
+        - traefik.backend=kibana
+        - traefik.docker.network=public
+        - traefik.redirectorservice.frontend.entryPoints=http
         
   filebeat:
-    image: docker.elastic.co/beats/filebeat:${ELASTIC_VERSION:-6.5.0}
+    image: docker.elastic.co/beats/filebeat:${ELASTIC_VERSION:-6.7.0}
     hostname: "{{.Node.Hostname}}-filebeat"
     user: root
     networks:
-      - appnet
+      - private
     configs:
       - source: fb_config
         target: /usr/share/filebeat/filebeat.yml
@@ -64,7 +64,7 @@ services:
     environment:
       - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-elasticsearch}
       - KIBANA_HOST=${KIBANA_HOST:-kibana}
-      - ELASTICSEARCH_USERNAME=${ELASTICSEARCH_USERNAME:-changeme}
+      - ELASTICSEARCH_USERNAME=${ELASTICSEARCH_USERNAME:-elastic}
       - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-changeme}
       - ELASTICSEARCH_PORT=${ELASTICSEARCH_PORT:-9200}
       - KIBANA_PORT=${KIBANA_PORT:-5601}
@@ -72,16 +72,45 @@ services:
     deploy:
       mode: global
 
+  metricbeat:
+    image: docker.elastic.co/beats/metricbeat:${ELASTIC_VERSION:-6.7.0}
+    hostname: "{{.Node.Hostname}}-metricbeat"
+    user: root
+    networks:
+      - private
+    configs:
+      - source: mb_config
+        target: /usr/share/metricbeat/metricbeat.yml
+    volumes:
+      - /proc:/hostfs/proc:ro
+      - /sys/fs/cgroup:/hostfs/sys/fs/cgroup:ro
+      - /:/hostfs:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+      - metricbeat:/usr/share/metricbeat/data
+    environment:
+      - ELASTICSEARCH_HOST=${ELASTICSEARCH_HOST:-elasticsearch}
+      - KIBANA_HOST=${KIBANA_HOST:-kibana}
+      - KIBANA_PORT=${KIBANA_PORT:-5601}
+      - ELASTICSEARCH_USERNAME=${ELASTICSEARCH_USERNAME:-elastic}
+      - ELASTICSEARCH_PASSWORD=${ELASTICSEARCH_PASSWORD:-changeme}
+    command: ["--strict.perms=false", "-system.hostfs=/hostfs"]
+    deploy:
+      mode: global
+
 networks:
-  appnet:
-    external: true
+  private:
+    driver: overlay
+    name: private
   public:
     external: true
 
 volumes:
   filebeat: {}
+  metricbeat: {}
   elasticsearch: {}
 
 configs:
   fb_config:
     file: $PWD/filebeat/config/filebeat.yml
+  mb_config:
+    file: $PWD/metricbeat/config/metricbeat.yml
